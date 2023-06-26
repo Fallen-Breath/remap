@@ -5,6 +5,7 @@ import org.cadixdev.lorenz.MappingSet
 import org.jetbrains.kotlin.cli.common.CLIConfigurationKeys
 import org.jetbrains.kotlin.cli.common.config.ContentRoot
 import org.jetbrains.kotlin.cli.common.config.KotlinSourceRoot
+import org.jetbrains.kotlin.cli.common.environment.setIdeaIoUseFallback
 import org.jetbrains.kotlin.cli.common.messages.MessageCollector
 import org.jetbrains.kotlin.cli.common.messages.MessageRenderer
 import org.jetbrains.kotlin.cli.common.messages.PrintingMessageCollector
@@ -47,6 +48,10 @@ class Transformer(private val map: MappingSet) {
     var remappedJdkHome: File? = null
     var patternAnnotation: String? = null
     var manageImports = false
+
+    init {
+        setIdeaIoUseFallback()
+    }
 
     @Throws(IOException::class)
     fun remap(sources: Map<String, String>): Map<String, Pair<String, List<Pair<Int, String>>>> =
