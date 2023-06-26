@@ -1,3 +1,8 @@
+Modifications in this fork
+
+- Fix warning `WARN: Failed to initialize native filesystem for Windows`
+- Add field `enableMessageCollector` to Transformer as a switch to the PrintingMessageCollector configuration
+
 ### Remap
 To support multiple Minecraft versions with the ReplayMod, a preprocessor is used which transforms source code to compile against different Minecraft versions.
 
