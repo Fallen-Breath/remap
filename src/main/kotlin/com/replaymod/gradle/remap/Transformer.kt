@@ -46,16 +46,6 @@ class Transformer(private val map: MappingSet) {
     var manageImports = false
     var enableMessageCollector = true
 
-    init {
-        // Fix "WARN: Failed to initialize native filesystem for Windows" warnings
-        setIdeaIoUseFallback()
-
-        // Mute intellij platform logger for those "WARN: The registry key 'xxx' accessed, but not loaded yet" warnings
-        org.jetbrains.kotlin.com.intellij.openapi.diagnostic.Logger.setFactory {
-            org.jetbrains.kotlin.utils.PrintingLogger(PrintStream(object : OutputStream() { override fun write(b: Int) {} }))
-        }
-    }
-
     @Throws(IOException::class)
     fun remap(sources: Map<String, String>): Map<String, Pair<String, List<Pair<Int, String>>>> =
             remap(sources, emptyMap())
@@ -250,6 +240,18 @@ class Transformer(private val map: MappingSet) {
 
             if (results.any { it.value.second.isNotEmpty() }) {
                 exitProcess(1)
+            }
+        }
+
+        init {
+            // Fix "WARN: Failed to initialize native filesystem for Windows" warnings
+            setIdeaIoUseFallback()
+
+            // Mute intellij platform logger for those "WARN: The registry key 'xxx' accessed, but not loaded yet" warnings
+            org.jetbrains.kotlin.com.intellij.openapi.diagnostic.Logger.setFactory {
+                org.jetbrains.kotlin.utils.PrintingLogger(PrintStream(object : OutputStream() {
+                    override fun write(b: Int) {}
+                }))
             }
         }
     }
