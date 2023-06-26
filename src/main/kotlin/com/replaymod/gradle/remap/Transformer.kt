@@ -29,11 +29,7 @@ import org.jetbrains.kotlin.config.CompilerConfiguration
 import org.jetbrains.kotlin.config.JVMConfigurationKeys
 import org.jetbrains.kotlin.psi.KtFile
 import org.jetbrains.kotlin.utils.PathUtil
-import java.io.BufferedReader
-import java.io.File
-import java.io.IOException
-import java.io.InputStreamReader
-import java.lang.Exception
+import java.io.*
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
@@ -51,7 +47,13 @@ class Transformer(private val map: MappingSet) {
     var enableMessageCollector = true
 
     init {
+        // Fix "WARN: Failed to initialize native filesystem for Windows" warnings
         setIdeaIoUseFallback()
+
+        // Mute intellij platform logger for those "WARN: The registry key 'xxx' accessed, but not loaded yet" warnings
+        org.jetbrains.kotlin.com.intellij.openapi.diagnostic.Logger.setFactory {
+            org.jetbrains.kotlin.utils.PrintingLogger(PrintStream(object : OutputStream() { override fun write(b: Int) {} }))
+        }
     }
 
     @Throws(IOException::class)

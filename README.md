@@ -1,6 +1,7 @@
 Modifications in this fork
 
-- Fix warning `WARN: Failed to initialize native filesystem for Windows`
+- Fix `WARN: Failed to initialize native filesystem for Windows` warnings
+- Mute intellij platform logger for those `WARN: The registry key 'xxx' accessed, but not loaded yet` warnings
 - Add field `enableMessageCollector` to Transformer as a switch to the PrintingMessageCollector configuration
 
 ### Remap
