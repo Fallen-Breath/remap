@@ -3,6 +3,7 @@ Modifications in this fork
 - Fix `WARN: Failed to initialize native filesystem for Windows` warnings
 - Mute intellij platform logger for those `WARN: The registry key 'xxx' accessed, but not loaded yet` warnings
 - Add field `enableMessageCollector` to Transformer, which works as a switch to the PrintingMessageCollector configuration, to get rip of those `v: Loading modules: [...]` messages
+- Add temporary fix for https://github.com/ReplayMod/remap/issues/18
 
 ### Remap
 To support multiple Minecraft versions with the ReplayMod, a preprocessor is used which transforms source code to compile against different Minecraft versions.

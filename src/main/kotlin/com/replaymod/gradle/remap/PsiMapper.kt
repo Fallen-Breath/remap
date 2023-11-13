@@ -532,6 +532,22 @@ internal class PsiMapper(
 
     private fun remapMixinTarget(target: String): String {
         return if (target.contains(':') || target.contains('(')) {
+            // fallen's fork: temporary fix for https://github.com/ReplayMod/remap/issues/18
+            if (target[0] == '(' && target[target.length - 1] == ';') {
+                // the NEW target equals to "(I)Lnet/minecraft/network/PacketDeflater;"
+                // the remap function accepts "Lnet/minecraft/network/PacketDeflater;<init>(I)V"
+                val argsEnd = target.indexOf(')')
+                val invokeTarget = target.substring(argsEnd + 1) + "<init>" + target.substring(0, argsEnd + 1) + "V"
+
+                val remappedTarget = remapFullyQualifiedMethodOrField(invokeTarget)
+
+                val argsStart2 = remappedTarget.indexOf('(')
+                val argsEnd2 = remappedTarget.indexOf(')')
+                val ownerEnd2 = remappedTarget.indexOf(';')
+
+                return remappedTarget.substring(argsStart2, argsEnd2 + 1) + remappedTarget.substring(0, ownerEnd2 + 1)
+            }
+
             remapFullyQualifiedMethodOrField(target)
         } else {
             if (target[0] == 'L') {
