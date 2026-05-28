@@ -5,6 +5,7 @@ import org.cadixdev.bombe.type.MethodDescriptor
 import org.cadixdev.bombe.type.signature.MethodSignature
 import org.cadixdev.lorenz.MappingSet
 import org.cadixdev.lorenz.model.ClassMapping
+import org.cadixdev.lorenz.model.FieldMapping
 import org.cadixdev.lorenz.model.MethodMapping
 import org.jetbrains.kotlin.asJava.getRepresentativeLightMethod
 import org.jetbrains.kotlin.com.intellij.lang.ASTNode
@@ -100,14 +101,7 @@ internal class PsiMapper(
 
     private fun map(expr: PsiElement, field: PsiField) {
         val fieldName = field.name
-        val declaringClass = field.containingClass ?: return
-        val name = declaringClass.dollarQualifiedName ?: return
-        var mapping: ClassMapping<*, *>? = this.mixinMappings[declaringClass.qualifiedName ?: return]
-        if (mapping == null) {
-            mapping = map.findClassMapping(name)
-        }
-        if (mapping == null) return
-        val mapped = mapping.findFieldMapping(fieldName)?.deobfuscatedName
+        val mapped = findMapping(field)?.deobfuscatedName
         if (mapped == null || mapped == fieldName) return
         replaceIdentifier(expr, mapped)
 
@@ -119,6 +113,17 @@ internal class PsiMapper(
                     "This can cause issues if the remapped reference becomes shadowed by a local variable and is therefore forbidden. " +
                     "Use \"this.$fieldName\" instead.")
         }
+    }
+
+    private fun findMapping(field: PsiField): FieldMapping? {
+        val declaringClass = field.containingClass ?: return null
+        val name = declaringClass.dollarQualifiedName ?: return null
+        var mapping: ClassMapping<*, *>? = this.mixinMappings[declaringClass.qualifiedName ?: return null]
+        if (mapping == null) {
+            mapping = map.findClassMapping(name)
+        }
+        if (mapping == null) return null
+        return mapping.findFieldMapping(field.name)
     }
 
     private fun map(expr: PsiElement, method: PsiMethod) {
