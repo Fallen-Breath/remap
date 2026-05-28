@@ -2,6 +2,7 @@ CL: a/pkg/A b/pkg/B
 FD: a/pkg/A/a b/pkg/B/b
 FD: a/pkg/A/aPub b/pkg/B/bPub
 FD: a/pkg/A/aField b/pkg/B/bField
+MD: a/pkg/A/createA ()La/pkg/A; b/pkg/B/createB ()Lb/pkg/B;
 MD: a/pkg/A/aMethod ()V b/pkg/B/bMethod ()V
 MD: a/pkg/A/getA ()La/pkg/A; b/pkg/B/getB ()Lb/pkg/B;
 MD: a/pkg/A/getSyntheticA ()La/pkg/A; b/pkg/B/getSyntheticB ()Lb/pkg/B;
@@ -26,6 +27,10 @@ MD: a/pkg/A/commonOverloaded (Ljava/lang/Object;)V b/pkg/B/commonOverloaded (Lja
 MD: a/pkg/A/commonOverloaded (La/pkg/A;)V b/pkg/B/commonOverloaded (La/pkg/B;)V
 MD: a/pkg/A/aSpecializableMethod ()La/pkg/A; b/pkg/B/bSpecializableMethod ()Lb/pkg/B;
 MD: a/pkg/A/aSpecializableMethodWithChangingSignature ()La/pkg/A; b/pkg/B/bSpecializableMethodWithChangingSignature (I)Lb/pkg/B;
+MD: a/pkg/A/aStaticOverload ()La/pkg/A; b/pkg/B/bStaticOverload ()Lb/pkg/B;
+MD: a/pkg/A/aStaticOverload (I)La/pkg/A; b/pkg/B/bStaticOverload (I)Lb/pkg/B;
+MD: a/pkg/A/aAmbiguousMethod ()La/pkg/A; b/pkg/B/bAmbiguousMethodWithoutInt ()Lb/pkg/B;
+MD: a/pkg/A/aAmbiguousMethod (I)La/pkg/A; b/pkg/B/bAmbiguousMethodWithInt (I)Lb/pkg/B;
 CL: a/pkg/A$1 b/pkg/B$1
 FD: a/pkg/A$1/val$aLocal b/pkg/B$1/val$bLocal
 FD: a/pkg/A$1/aAnonField b/pkg/B$1/bAnonField

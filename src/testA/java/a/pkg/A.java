@@ -15,6 +15,7 @@ public class A extends AParent implements AInterface {
     }
 
     public static A create() { return new A(); }
+    public static A createA() { return new A(); }
 
     public void aMethod() {
         aInterfaceMethod();
@@ -119,6 +120,12 @@ public class A extends AParent implements AInterface {
     public A aSpecializableMethodWithChangingSignature() {
         return this;
     }
+
+    public static A aStaticOverload() { return create(); }
+    public static A aStaticOverload(int i) { return create(); }
+
+    public static A aAmbiguousMethod() { return create(); }
+    public static A aAmbiguousMethod(int i) { return create(); }
 
     public static void supplier(Supplier<String> supplier) {
     }
