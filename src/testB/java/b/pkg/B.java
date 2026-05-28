@@ -96,8 +96,14 @@ public class B extends BParent implements BInterface {
 
     @Override
     public void bInterfaceMethod() {
+        B bLocal = getB();
         new B() {
             private int bAnonField;
+
+            @Override
+            public B getB() {
+                return bLocal;
+            }
         };
     }
 

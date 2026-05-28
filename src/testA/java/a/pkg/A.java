@@ -99,8 +99,14 @@ public class A extends AParent implements AInterface {
 
     @Override
     public void aInterfaceMethod() {
+        A aLocal = getA();
         new A() {
             private int aAnonField;
+
+            @Override
+            public A getA() {
+                return aLocal;
+            }
         };
     }
 

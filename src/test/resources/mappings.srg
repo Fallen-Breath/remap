@@ -27,6 +27,7 @@ MD: a/pkg/A/commonOverloaded (La/pkg/A;)V b/pkg/B/commonOverloaded (La/pkg/B;)V
 MD: a/pkg/A/aSpecializableMethod ()La/pkg/A; b/pkg/B/bSpecializableMethod ()Lb/pkg/B;
 MD: a/pkg/A/aSpecializableMethodWithChangingSignature ()La/pkg/A; b/pkg/B/bSpecializableMethodWithChangingSignature (I)Lb/pkg/B;
 CL: a/pkg/A$1 b/pkg/B$1
+FD: a/pkg/A$1/val$aLocal b/pkg/B$1/val$bLocal
 FD: a/pkg/A$1/aAnonField b/pkg/B$1/bAnonField
 CL: a/pkg/A$Inner b/pkg/B$Inner
 FD: a/pkg/A$Inner/aField b/pkg/B$Inner/bField
