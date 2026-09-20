@@ -12,6 +12,7 @@ public class B extends BParent implements BInterface {
     }
 
     public static B create() { return new B(); }
+    public static B createB() { return new B(); }
 
     public void bMethod() {
         bInterfaceMethod();
@@ -96,8 +97,14 @@ public class B extends BParent implements BInterface {
 
     @Override
     public void bInterfaceMethod() {
+        B bLocal = getB();
         new B() {
             private int bAnonField;
+
+            @Override
+            public B getB() {
+                return bLocal;
+            }
         };
     }
 
@@ -110,6 +117,12 @@ public class B extends BParent implements BInterface {
     public B bSpecializableMethodWithChangingSignature(int newArgument) {
         return this;
     }
+
+    public static B bStaticOverload() { return create(); }
+    public static B bStaticOverload(int i) { return create(); }
+
+    public static B bAmbiguousMethodWithoutInt() { return create(); }
+    public static B bAmbiguousMethodWithInt(int i) { return create(); }
 
     public class Inner {
         private int bField;

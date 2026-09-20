@@ -5,6 +5,7 @@ import org.cadixdev.bombe.type.MethodDescriptor
 import org.cadixdev.bombe.type.signature.MethodSignature
 import org.cadixdev.lorenz.MappingSet
 import org.cadixdev.lorenz.model.ClassMapping
+import org.cadixdev.lorenz.model.FieldMapping
 import org.cadixdev.lorenz.model.MethodMapping
 import org.jetbrains.kotlin.asJava.getRepresentativeLightMethod
 import org.jetbrains.kotlin.com.intellij.lang.ASTNode
@@ -100,14 +101,7 @@ internal class PsiMapper(
 
     private fun map(expr: PsiElement, field: PsiField) {
         val fieldName = field.name
-        val declaringClass = field.containingClass ?: return
-        val name = declaringClass.dollarQualifiedName ?: return
-        var mapping: ClassMapping<*, *>? = this.mixinMappings[declaringClass.qualifiedName ?: return]
-        if (mapping == null) {
-            mapping = map.findClassMapping(name)
-        }
-        if (mapping == null) return
-        val mapped = mapping.findFieldMapping(fieldName)?.deobfuscatedName
+        val mapped = findMapping(field)?.deobfuscatedName
         if (mapped == null || mapped == fieldName) return
         replaceIdentifier(expr, mapped)
 
@@ -119,6 +113,17 @@ internal class PsiMapper(
                     "This can cause issues if the remapped reference becomes shadowed by a local variable and is therefore forbidden. " +
                     "Use \"this.$fieldName\" instead.")
         }
+    }
+
+    private fun findMapping(field: PsiField): FieldMapping? {
+        val declaringClass = field.containingClass ?: return null
+        val name = declaringClass.dollarQualifiedName ?: return null
+        var mapping: ClassMapping<*, *>? = this.mixinMappings[declaringClass.qualifiedName ?: return null]
+        if (mapping == null) {
+            mapping = map.findClassMapping(name)
+        }
+        if (mapping == null) return null
+        return mapping.findFieldMapping(field.name)
     }
 
     private fun map(expr: PsiElement, method: PsiMethod) {
@@ -481,6 +486,15 @@ internal class PsiMapper(
         }
     }
 
+    private fun findMappedName(element: PsiElement): String? {
+        return when (element) {
+            is PsiField -> findMapping(element)?.deobfuscatedName
+            is PsiMethod -> findMapping(element)?.deobfuscatedName
+            is KtNamedFunction -> findMappedName(element.getRepresentativeLightMethod() ?: return null)
+            else -> null
+        }
+    }
+
     private fun isSyntheticPropertyShadowedByField(propertyName: String, mapping: MethodMapping, expr: PsiElement): Boolean {
         val cls = findPsiClass(mapping.parent.fullDeobfuscatedName, remappedProject ?: file.project) ?: return false
         val field = cls.findFieldByName(propertyName, true) ?: return false
@@ -814,6 +828,33 @@ internal class PsiMapper(
         }
     }
 
+    private val allDirectJavaReferences by lazy {
+        buildSet {
+            file.accept(object : JavaRecursiveElementVisitor() {
+                override fun visitReferenceElement(reference: PsiJavaCodeReferenceElement) {
+                    val target = reference.resolve()
+                    if (target != null) {
+                        add(target)
+                    }
+                    return super.visitReferenceElement(reference)
+                }
+            })
+        }
+    }
+    private val allDirectKtReferences by lazy {
+        buildSet {
+            file.accept(object : KtTreeVisitor<Void?>() {
+                override fun visitReferenceExpression(expression: KtReferenceExpression, data: Void?): Void? {
+                    val target = bindingContext[BindingContext.REFERENCE_TARGET, expression]
+                    if (target != null) {
+                        add(target)
+                    }
+                    return super.visitReferenceExpression(expression, data)
+                }
+            })
+        }
+    }
+
     fun remapFile(): Pair<String, List<Pair<Int, String>>> {
         if (file is KtFile) {
             for (importDirective in file.importDirectives) {
@@ -880,6 +921,32 @@ internal class PsiMapper(
                 }
                 super.visitReferenceElement(reference)
             }
+
+            override fun visitImportStaticReferenceElement(reference: PsiImportStaticReferenceElement) {
+                if (valid(reference)) {
+                    var resolved = reference.resolve()
+                    if (resolved == null) {
+                        val possibleTargets = reference.multiResolve(false)
+                            .mapNotNull { if (it.isValidResult) it.element else null }
+                        if (!possibleTargets.isEmpty()) {
+                            val usedTargets = possibleTargets.filter { it in allDirectJavaReferences }
+                            val targets = usedTargets.mapNotNull { psi ->
+                                val mapped = findMappedName(psi) ?: return@mapNotNull null
+                                Pair(psi, mapped)
+                            }
+                            val mappedNames = targets.mapTo(mutableSetOf()) { it.second }
+                            if (mappedNames.size > 1) {
+                                error(reference, "\"${reference.text}\" is ambiguous and remaps to " +
+                                        "multiple different names: " + mappedNames.joinToString { "\"${it}\"" })
+                            } else if (mappedNames.size == 1) {
+                                resolved = targets.first().first
+                            }
+                        }
+                    }
+                    map(reference, resolved)
+                }
+                super.visitImportStaticReferenceElement(reference)
+            }
         })
 
         if (file is KtFile) {
@@ -911,7 +978,25 @@ internal class PsiMapper(
 
                 override fun visitReferenceExpression(expression: KtReferenceExpression, data: Void?): Void? {
                     if (valid(expression)) {
-                        val target = bindingContext[BindingContext.REFERENCE_TARGET, expression]
+                        var target = bindingContext[BindingContext.REFERENCE_TARGET, expression]
+                        if (target == null) {
+                            val possibleTargets = bindingContext[BindingContext.AMBIGUOUS_REFERENCE_TARGET, expression]
+                            if (possibleTargets != null && !possibleTargets.isEmpty()) {
+                                val usedTargets = possibleTargets.filter { it in allDirectKtReferences }
+                                val targets = usedTargets.mapNotNull { descriptor ->
+                                    val psi = descriptor.findPsi() ?: return@mapNotNull null
+                                    val mapped = findMappedName(psi) ?: return@mapNotNull null
+                                    Pair(descriptor, mapped)
+                                }
+                                val mappedNames = targets.mapTo(mutableSetOf()) { it.second }
+                                if (mappedNames.size > 1) {
+                                    error(expression, "\"${expression.text}\" is ambiguous and remaps to " +
+                                            "multiple different names: " + mappedNames.joinToString { "\"${it}\"" })
+                                } else if (mappedNames.size == 1) {
+                                    target = targets.first().first
+                                }
+                            }
+                        }
                         if (target is SyntheticJavaPropertyDescriptor) {
                             map(expression, target)
                         } else if (target != null

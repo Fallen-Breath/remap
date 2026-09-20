@@ -60,4 +60,59 @@ class TestKotlinImports {
             val test: b.pkg.B.InnerB = b.pkg.B.InnerB()
         """.trimIndent()
     }
+
+    @Test
+    fun `remaps imported method`() {
+        TestData.remapKt("""
+            import a.pkg.A.createA
+            val test = createA()
+        """.trimIndent()) shouldBe """
+            import b.pkg.B.createB
+            val test = createB()
+        """.trimIndent()
+    }
+
+    @Test
+    fun `remaps ambiguous imported method when all referenced elements remap to the same name`() {
+        TestData.remapKt("""
+            import a.pkg.A.aStaticOverload
+            val test = aStaticOverload() + aStaticOverload(1)
+        """.trimIndent()) shouldBe """
+            import b.pkg.B.bStaticOverload
+            val test = bStaticOverload() + bStaticOverload(1)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `remaps ambiguous imported method when only one is actually used`() {
+        TestData.remapKt("""
+            import a.pkg.A.aAmbiguousMethod
+            val test = aAmbiguousMethod()
+        """.trimIndent()) shouldBe """
+            import b.pkg.B.bAmbiguousMethodWithoutInt
+            val test = bAmbiguousMethodWithoutInt()
+        """.trimIndent()
+
+        TestData.remapKt("""
+            import a.pkg.A.aAmbiguousMethod
+            val test = aAmbiguousMethod(0)
+        """.trimIndent()) shouldBe """
+            import b.pkg.B.bAmbiguousMethodWithInt
+            val test = bAmbiguousMethodWithInt(0)
+        """.trimIndent()
+    }
+
+    @Test
+    fun `refuses to remap ambiguous imported method`() {
+        val (_, errors) = TestData.remapKtWithErrors("""
+            import a.pkg.A.aAmbiguousMethod
+            val test = aAmbiguousMethod() + aAmbiguousMethod(0)
+        """.trimIndent())
+        errors shouldHaveSize 1
+        val (line, error) = errors[0]
+        line shouldBe 0
+        error shouldContain "aAmbiguousMethod"
+        error shouldContain "bAmbiguousMethodWithInt"
+        error shouldContain "bAmbiguousMethodWithoutInt"
+    }
 }
