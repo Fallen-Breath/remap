@@ -55,10 +55,20 @@ tasks.test {
     useJUnitPlatform()
 }
 
-tasks.compileKotlin {
-    compilerOptions {
-        apiVersion.set(KotlinVersion.KOTLIN_1_9)
-        languageVersion.set(KotlinVersion.KOTLIN_1_9)
+val publishedKotlinCompileTasks = listOf(
+    "compileKotlin",
+    "compileKotlin1521Kotlin",
+    "compileKotlin1620Kotlin",
+    "compileKotlin190Kotlin",
+    "compileKotlin200Kotlin",
+)
+
+publishedKotlinCompileTasks.forEach { taskName ->
+    tasks.named<KotlinCompile>(taskName) {
+        compilerOptions {
+            apiVersion.set(KotlinVersion.KOTLIN_1_9)
+            languageVersion.set(KotlinVersion.KOTLIN_1_9)
+        }
     }
 }
 
