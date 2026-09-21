@@ -54,7 +54,9 @@ class Transformer(private val map: MappingSet) {
     @Throws(IOException::class)
     fun remap(sources: Map<String, String>, processedSources: Map<String, String>): Map<String, Pair<String, List<Pair<Int, String>>>> {
         val tmpDir = Files.createTempDirectory("remap")
-        val processedTmpDir = Files.createTempDirectory("remap-processed")
+        // fallen's fork: optimize skip unused processed temp root - begin
+        val processedTmpDir = if (manageImports) Files.createTempDirectory("remap-processed") else null
+        // fallen's fork: optimize skip unused processed temp root - end
         val disposable = Disposer.newDisposable()
         try {
             for ((unitName, source) in sources) {
@@ -62,10 +64,14 @@ class Transformer(private val map: MappingSet) {
                 Files.createDirectories(path.parent)
                 Files.write(path, source.toByteArray(StandardCharsets.UTF_8), StandardOpenOption.CREATE)
 
-                val processedSource = processedSources[unitName] ?: source
-                val processedPath = processedTmpDir.resolve(unitName)
-                Files.createDirectories(processedPath.parent)
-                Files.write(processedPath, processedSource.toByteArray(), StandardOpenOption.CREATE)
+                // fallen's fork: optimize skip unused processed temp root - begin
+                processedTmpDir?.let { processedRoot ->
+                    val processedSource = processedSources[unitName] ?: source
+                    val processedPath = processedRoot.resolve(unitName)
+                    Files.createDirectories(processedPath.parent)
+                    Files.write(processedPath, processedSource.toByteArray(), StandardOpenOption.CREATE)
+                }
+                // fallen's fork: optimize skip unused processed temp root - end
             }
 
             val config = CompilerConfiguration()
@@ -175,7 +181,11 @@ class Transformer(private val map: MappingSet) {
             return results
         } finally {
             Files.walk(tmpDir).sorted(Comparator.reverseOrder()).forEach { Files.delete(it) }
-            Files.walk(processedTmpDir).sorted(Comparator.reverseOrder()).forEach { Files.delete(it) }
+            // fallen's fork: optimize skip unused processed temp root - begin
+            processedTmpDir?.let { processedRoot ->
+                Files.walk(processedRoot).sorted(Comparator.reverseOrder()).forEach { Files.delete(it) }
+            }
+            // fallen's fork: optimize skip unused processed temp root - end
             Disposer.dispose(disposable)
         }
     }
@@ -189,14 +199,16 @@ class Transformer(private val map: MappingSet) {
         }
     }
 
-    private fun setupRemappedProject(disposable: Disposable, classpath: Array<String>, sourceRoot: Path): KotlinCoreEnvironment {
+    private fun setupRemappedProject(disposable: Disposable, classpath: Array<String>, sourceRoot: Path?): KotlinCoreEnvironment { // fallen's fork: optimize skip unused processed temp root
         val config = CompilerConfiguration()
         (remappedJdkHome ?: jdkHome)?.let { config.setupJdk(it) }
         config.put(CommonConfigurationKeys.MODULE_NAME, "main")
         config.addAll(CLIConfigurationKeys.CONTENT_ROOTS, classpath.map { JvmClasspathRoot(File(it)) })
+        // fallen's fork: optimize skip unused processed temp root - begin
         if (manageImports) {
-            config.add(CLIConfigurationKeys.CONTENT_ROOTS, JavaSourceRoot(sourceRoot.toFile(), ""))
+            config.add(CLIConfigurationKeys.CONTENT_ROOTS, JavaSourceRoot(requireNotNull(sourceRoot).toFile(), ""))
         }
+        // fallen's fork: optimize skip unused processed temp root - end
         config.put(
             CLIConfigurationKeys.MESSAGE_COLLECTOR_KEY,
             if (enableMessageCollector) PrintingMessageCollector(System.err, MessageRenderer.GRADLE_STYLE, verboseCompilerMessages)
