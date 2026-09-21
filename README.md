@@ -5,6 +5,7 @@ Modifications in this fork
 - Add field `enableMessageCollector` to Transformer, which works as a switch to the PrintingMessageCollector configuration, to get rip of those `v: Loading modules: [...]` messages
 - Optimizations:
   - When `manageImports` is disabled, skip creating, writing, and cleaning the unused processed-source temporary directory.
+  - Use physical source roots for PSI when source paths, file types, and encodings are safe; otherwise fall back to staged sources.
 
 ### Remap
 To support multiple Minecraft versions with the ReplayMod, a preprocessor is used which transforms source code to compile against different Minecraft versions.

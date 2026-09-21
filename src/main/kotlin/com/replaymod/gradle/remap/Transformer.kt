@@ -37,6 +37,13 @@ import java.nio.file.StandardOpenOption
 import java.util.*
 import kotlin.system.exitProcess
 
+// fallen's fork: optimize use physical source roots for PSI
+data class PhysicalSourceFile(
+    val file: File,
+    val sourceRoot: File,
+    val sourceText: String,
+)
+
 class Transformer(private val map: MappingSet) {
     var classpath: Array<String>? = null
     var remappedClasspath: Array<String>? = null
@@ -53,23 +60,46 @@ class Transformer(private val map: MappingSet) {
 
     @Throws(IOException::class)
     fun remap(sources: Map<String, String>, processedSources: Map<String, String>): Map<String, Pair<String, List<Pair<Int, String>>>> {
-        val tmpDir = Files.createTempDirectory("remap")
-        // fallen's fork: optimize skip unused processed temp root - begin
-        val processedTmpDir = if (manageImports) Files.createTempDirectory("remap-processed") else null
-        // fallen's fork: optimize skip unused processed temp root - end
+        // fallen's fork: optimize use physical source roots for PSI - extract common impl
+        return remapInternal(sources, processedSources, null)
+    }
+
+    // fallen's fork: optimize use physical source roots for PSI - add PhysicalSourceFile variant
+    @Throws(IOException::class)
+    fun remapFromFiles(sources: Map<String, PhysicalSourceFile>, processedSources: Map<String, String>): Map<String, Pair<String, List<Pair<Int, String>>>> {
+        return remapInternal(sources.mapValues { it.value.sourceText }, processedSources, sources)
+    }
+
+    // fallen's fork: optimize use physical source roots for PSI - extract common impl
+    private fun remapInternal(sources: Map<String, String>, processedSources: Map<String, String>, physicalSourceFiles: Map<String, PhysicalSourceFile>?): Map<String, Pair<String, List<Pair<Int, String>>>> {
+        val tmpDir = if (physicalSourceFiles == null) Files.createTempDirectory("remap") else null
+        val processedTmpDir = if (manageImports) Files.createTempDirectory("remap-processed") else null  // fallen's fork: optimize skip unused processed temp root
         val disposable = Disposer.newDisposable()
         try {
-            for ((unitName, source) in sources) {
-                val path = tmpDir.resolve(unitName)
-                Files.createDirectories(path.parent)
-                Files.write(path, source.toByteArray(StandardCharsets.UTF_8), StandardOpenOption.CREATE)
+            if (physicalSourceFiles == null) {  // fallen's fork: optimize use physical source roots for PSI - warp with if
+                for ((unitName, source) in sources) {
+                    val path = tmpDir!!.resolve(unitName)
+                    Files.createDirectories(path.parent)
+                    Files.write(path, source.toByteArray(StandardCharsets.UTF_8), StandardOpenOption.CREATE)
 
+                    // fallen's fork: optimize skip unused processed temp root - begin
+                    processedTmpDir?.let { processedRoot ->
+                        val processedSource = processedSources[unitName] ?: source
+                        val processedPath = processedRoot.resolve(unitName)
+                        Files.createDirectories(processedPath.parent)
+                        Files.write(processedPath, processedSource.toByteArray(), StandardOpenOption.CREATE)
+                    }
+                    // fallen's fork: optimize skip unused processed temp root - end
+                }
+            } else {
                 // fallen's fork: optimize skip unused processed temp root - begin
                 processedTmpDir?.let { processedRoot ->
-                    val processedSource = processedSources[unitName] ?: source
-                    val processedPath = processedRoot.resolve(unitName)
-                    Files.createDirectories(processedPath.parent)
-                    Files.write(processedPath, processedSource.toByteArray(), StandardOpenOption.CREATE)
+                    for ((unitName, source) in sources) {
+                        val processedSource = processedSources[unitName] ?: source
+                        val processedPath = processedRoot.resolve(unitName)
+                        Files.createDirectories(processedPath.parent)
+                        Files.write(processedPath, processedSource.toByteArray(), StandardOpenOption.CREATE)
+                    }
                 }
                 // fallen's fork: optimize skip unused processed temp root - end
             }
@@ -77,13 +107,24 @@ class Transformer(private val map: MappingSet) {
             val config = CompilerConfiguration()
             config.put(CommonConfigurationKeys.MODULE_NAME, "main")
             jdkHome?.let {config.setupJdk(it) }
-            config.add<ContentRoot>(CLIConfigurationKeys.CONTENT_ROOTS, JavaSourceRoot(tmpDir.toFile(), ""))
-            val kotlinSourceRoot = try {
-                kotlinSourceRoot1521(tmpDir.toAbsolutePath().toString(), false)
-            } catch (e: NoSuchMethodError) {
-                kotlinSourceRoot190(tmpDir.toAbsolutePath().toString(), false)
+
+            // fallen's fork: optimize use physical source roots for PSI - begin
+            val sourceRoots = if (physicalSourceFiles == null) {
+                listOf(tmpDir!!.toFile())
+            } else {
+                physicalSourceFiles.values.map { it.sourceRoot.absoluteFile }.distinctBy { it.toPath().normalize() }
             }
-            config.add<ContentRoot>(CLIConfigurationKeys.CONTENT_ROOTS, kotlinSourceRoot)
+            sourceRoots.forEach { sourceRoot ->  // fallen's fork: optimize use physical source roots for PSI - warp with sourceRoots.forEach
+                config.add<ContentRoot>(CLIConfigurationKeys.CONTENT_ROOTS, JavaSourceRoot(sourceRoot, ""))
+                val kotlinSourceRoot = try {
+                    kotlinSourceRoot1521(sourceRoot.absolutePath, false)
+                } catch (e: NoSuchMethodError) {
+                    kotlinSourceRoot190(sourceRoot.absolutePath, false)
+                }
+                config.add<ContentRoot>(CLIConfigurationKeys.CONTENT_ROOTS, kotlinSourceRoot)
+            }
+            // fallen's fork: optimize use physical source roots for PSI - end
+
             config.addAll<ContentRoot>(CLIConfigurationKeys.CONTENT_ROOTS, classpath!!.map { JvmClasspathRoot(File(it)) })
             config.put<MessageCollector>(
                 CLIConfigurationKeys.MESSAGE_COLLECTOR_KEY,
@@ -120,7 +161,16 @@ class Transformer(private val map: MappingSet) {
             val project = environment.project as MockProject
             val psiManager = PsiManager.getInstance(project)
             val vfs = VirtualFileManager.getInstance().getFileSystem(StandardFileSystems.FILE_PROTOCOL) as CoreLocalFileSystem
-            val virtualFiles = sources.mapValues { vfs.findFileByIoFile(tmpDir.resolve(it.key).toFile())!! }
+
+            // fallen's fork: optimize use physical source roots for PSI - begin
+            fun findSourceFile(name: String) = if (physicalSourceFiles == null) {
+                vfs.findFileByIoFile(tmpDir!!.resolve(name).toFile())!!
+            } else {
+                vfs.findFileByIoFile(physicalSourceFiles.getValue(name).file)!!
+            }
+            val virtualFiles = sources.mapValues { findSourceFile(it.key) }
+            // fallen's fork: optimize use physical source roots for PSI - end
+
             val psiFiles = virtualFiles.mapValues { psiManager.findFile(it.value)!! }
             val ktFiles = psiFiles.values.filterIsInstance<KtFile>()
 
@@ -144,7 +194,7 @@ class Transformer(private val map: MappingSet) {
                 for ((unitName, source) in sources) {
                     if (!source.contains(annotationName)) continue
                     try {
-                        val patternFile = vfs.findFileByIoFile(tmpDir.resolve(unitName).toFile())!!
+                        val patternFile = findSourceFile(unitName)
                         val patternPsiFile = psiManager.findFile(patternFile)!!
                         patterns.read(patternPsiFile, processedSources[unitName]!!)
                     } catch (e: Exception) {
@@ -162,7 +212,7 @@ class Transformer(private val map: MappingSet) {
 
             val results = HashMap<String, Pair<String, List<Pair<Int, String>>>>()
             for (name in sources.keys) {
-                val file = vfs.findFileByIoFile(tmpDir.resolve(name).toFile())!!
+                val file = findSourceFile(name)
                 val psiFile = psiManager.findFile(file)!!
 
                 var (text, errors) = try {
@@ -180,7 +230,12 @@ class Transformer(private val map: MappingSet) {
             }
             return results
         } finally {
-            Files.walk(tmpDir).sorted(Comparator.reverseOrder()).forEach { Files.delete(it) }
+            // fallen's fork: optimize use physical source roots for PSI - begin
+            tmpDir?.let { root ->
+                Files.walk(root).sorted(Comparator.reverseOrder()).forEach { Files.delete(it) }
+            }
+            // fallen's fork: optimize use physical source roots for PSI - end
+
             // fallen's fork: optimize skip unused processed temp root - begin
             processedTmpDir?.let { processedRoot ->
                 Files.walk(processedRoot).sorted(Comparator.reverseOrder()).forEach { Files.delete(it) }
