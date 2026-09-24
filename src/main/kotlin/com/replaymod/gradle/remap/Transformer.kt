@@ -234,7 +234,10 @@ class Transformer(private val map: MappingSet) {
 
             val results = HashMap<String, Pair<String, List<Pair<Int, String>>>>()
             // fallen's fork: debug remap profiling - begin
-            val psiMapperDebugStats = PsiMapperDebugStats(debugPotentialMappingNames(map))
+            val psiMapperDebugStats = PsiMapperDebugStats(
+                debugPotentialMappingNames(map),
+                debugConservativeMappingNames(map),
+            )
             // fallen's fork: debug remap profiling - end
             for (name in sources.keys) {
                 val file = findSourceFile(name)

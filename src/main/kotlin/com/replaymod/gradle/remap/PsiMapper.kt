@@ -61,8 +61,30 @@ internal fun debugPotentialMappingNames(map: MappingSet): Set<String> = buildSet
     map.topLevelClassMappings.forEach(::addClassMapping)
 }
 
+// fallen's fork: debug reference filtering criteria - begin
+internal fun debugConservativeMappingNames(map: MappingSet): Set<String> = buildSet {
+    fun addClassNameParts(name: String?) {
+        if (name == null) return
+        name.split('.', '/', '$')
+            .filter { it.isNotEmpty() }
+            .forEach(::add)
+    }
+
+    fun addClassMapping(mapping: ClassMapping<*, *>) {
+        addClassNameParts(mapping.fullObfuscatedName)
+        addClassNameParts(mapping.simpleObfuscatedName)
+        mapping.fieldMappings.forEach { add(it.obfuscatedName) }
+        mapping.methodMappings.forEach { add(it.obfuscatedName) }
+        mapping.innerClassMappings.forEach(::addClassMapping)
+    }
+
+    map.topLevelClassMappings.forEach(::addClassMapping)
+}
+// fallen's fork: debug reference filtering criteria - end
+
 internal class PsiMapperDebugStats(
     private val potentialMappingNames: Set<String>,
+    private val conservativeMappingNames: Set<String>,
 ) {
     var files = 0
     var filesWithChanges = 0
@@ -83,12 +105,17 @@ internal class PsiMapperDebugStats(
     // fallen's fork: debug reference filtering criteria - begin
     var javaReferencesWithPotentialName = 0
     var javaReferencesWithPotentialTextName = 0
+    var javaReferencesWithConservativePotentialTextName = 0
     var javaStaticReferencesWithPotentialName = 0
     var javaStaticReferencesWithPotentialTextName = 0
+    var javaStaticReferencesWithConservativePotentialTextName = 0
     // fallen's fork: debug reference filtering criteria - end
     var javaReferenceMapCalls = 0
     var javaReferencesWithChanges = 0
     var javaReferenceChanges = 0
+    var javaReferencesWithChangesOutsideConservativePotential = 0
+    var javaReferenceChangesOutsideConservativePotential = 0
+    private val changedReferencesOutsideConservativePotential = LinkedHashMap<String, Int>()
     var javaImportListsVisited = 0
     var patternVisitorNanos = 0L
     var mixinVisitorNanos = 0L
@@ -117,8 +144,7 @@ internal class PsiMapperDebugStats(
     fun hasPotentialMappingName(name: String?): Boolean = name != null && name in potentialMappingNames
 
     // fallen's fork: debug reference filtering criteria - begin
-    fun hasPotentialMappingNameInText(reference: PsiJavaCodeReferenceElement): Boolean {
-        val text = reference.text
+    private fun hasMappingNameInText(text: String, names: Set<String>): Boolean {
         var index = 0
         while (index < text.length) {
             val codePoint = text.codePointAt(index)
@@ -134,11 +160,41 @@ internal class PsiMapperDebugStats(
                 if (!Character.isJavaIdentifierPart(partCodePoint)) break
                 index += Character.charCount(partCodePoint)
             }
-            if (text.substring(start, index) in potentialMappingNames) {
+            if (text.substring(start, index) in names) {
                 return true
             }
         }
         return false
+    }
+
+    private fun hasMappingNameInReference(reference: PsiJavaCodeReferenceElement, names: Set<String>): Boolean {
+        var current: PsiJavaCodeReferenceElement? = reference
+        while (current != null) {
+            if (hasMappingNameInText(current.text, names)) return true
+            current = current.qualifier as? PsiJavaCodeReferenceElement
+        }
+        return false
+    }
+
+    fun hasPotentialMappingNameInText(reference: PsiJavaCodeReferenceElement): Boolean =
+        hasMappingNameInReference(reference, potentialMappingNames)
+
+    fun hasConservativePotentialMappingNameInText(reference: PsiJavaCodeReferenceElement): Boolean =
+        hasMappingNameInReference(reference, conservativeMappingNames)
+
+    fun recordChangedReferenceOutsideConservativePotential(
+        reference: PsiJavaCodeReferenceElement,
+        resolved: PsiElement?,
+        changes: Int,
+    ) {
+        javaReferencesWithChangesOutsideConservativePotential++
+        javaReferenceChangesOutsideConservativePotential += changes
+        val kind = resolved?.javaClass?.simpleName ?: "<unresolved>"
+        val key = "$kind:${reference.text}"
+        if (changedReferencesOutsideConservativePotential.size < 32 || key in changedReferencesOutsideConservativePotential) {
+            changedReferencesOutsideConservativePotential[key] =
+                (changedReferencesOutsideConservativePotential[key] ?: 0) + 1
+        }
     }
     // fallen's fork: debug reference filtering criteria - end
 
@@ -152,11 +208,17 @@ internal class PsiMapperDebugStats(
             "referenceResolve(calls=$javaReferenceResolveCalls, resolved=$javaReferencesResolved, " +
             // fallen's fork: debug reference filtering criteria - begin
             "potentialName=$javaReferencesWithPotentialName, potentialTextName=$javaReferencesWithPotentialTextName, " +
+            "conservativePotentialTextName=$javaReferencesWithConservativePotentialTextName, " +
             "staticPotentialName=$javaStaticReferencesWithPotentialName, " +
             "staticPotentialTextName=$javaStaticReferencesWithPotentialTextName, " +
+            "staticConservativePotentialTextName=$javaStaticReferencesWithConservativePotentialTextName, " +
             // fallen's fork: debug reference filtering criteria - end
             "potentialNames=${potentialMappingNames.size}, " +
-            "mapCalls=$javaReferenceMapCalls, changedReferences=$javaReferencesWithChanges, changes=$javaReferenceChanges), " +
+            "conservativePotentialNames=${conservativeMappingNames.size}, " +
+            "mapCalls=$javaReferenceMapCalls, changedReferences=$javaReferencesWithChanges, changes=$javaReferenceChanges, " +
+            "changedOutsideConservativePotential=$javaReferencesWithChangesOutsideConservativePotential, " +
+            "changesOutsideConservativePotential=$javaReferenceChangesOutsideConservativePotential, " +
+            "outsideSamples=${changedReferencesOutsideConservativePotential.entries.joinToString("|") { "${it.key}x${it.value}" }}), " +
             "phases(pattern=${patternVisitorNanos / 1_000_000}ms, mixin=${mixinVisitorNanos / 1_000_000}ms, " +
             "at=${mixinAtTargetNanos / 1_000_000}ms, accessor=${mixinAccessorNanos / 1_000_000}ms, " +
             "injection=${mixinInjectionNanos / 1_000_000}ms, java=${javaVisitorNanos / 1_000_000}ms, " +
@@ -1080,6 +1142,11 @@ internal class PsiMapper(
                     if (debugStats?.hasPotentialMappingNameInText(reference) == true) {
                         debugStats?.let { it.javaReferencesWithPotentialTextName++ }
                     }
+                    val hasConservativePotentialName =
+                        debugStats?.hasConservativePotentialMappingNameInText(reference) == true
+                    if (hasConservativePotentialName) {
+                        debugStats?.let { it.javaReferencesWithConservativePotentialTextName++ }
+                    }
                     // fallen's fork: debug reference filtering criteria - end
                     debugStats?.let { it.javaReferenceResolveCalls++ }
                     val resolved = reference.resolve()
@@ -1093,6 +1160,13 @@ internal class PsiMapper(
                         debugStats?.let {
                             it.javaReferencesWithChanges++
                             it.javaReferenceChanges += changes.size - changesBefore
+                            if (!hasConservativePotentialName) {
+                                it.recordChangedReferenceOutsideConservativePotential(
+                                    reference,
+                                    resolved,
+                                    changes.size - changesBefore,
+                                )
+                            }
                         }
                     }
                 }
@@ -1109,6 +1183,11 @@ internal class PsiMapper(
                     if (debugStats?.hasPotentialMappingNameInText(reference) == true) {
                         debugStats?.let { it.javaStaticReferencesWithPotentialTextName++ }
                     }
+                    if (debugStats?.hasConservativePotentialMappingNameInText(reference) == true) {
+                        debugStats?.let { it.javaStaticReferencesWithConservativePotentialTextName++ }
+                    }
+                    val hasConservativePotentialName =
+                        debugStats?.hasConservativePotentialMappingNameInText(reference) == true
                     // fallen's fork: debug reference filtering criteria - end
                     debugStats?.let { it.javaReferenceResolveCalls++ }
                     var resolved = reference.resolve()
@@ -1140,6 +1219,13 @@ internal class PsiMapper(
                         debugStats?.let {
                             it.javaReferencesWithChanges++
                             it.javaReferenceChanges += changes.size - changesBefore
+                            if (!hasConservativePotentialName) {
+                                it.recordChangedReferenceOutsideConservativePotential(
+                                    reference,
+                                    resolved,
+                                    changes.size - changesBefore,
+                                )
+                            }
                         }
                     }
                 }
