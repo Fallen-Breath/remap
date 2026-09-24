@@ -38,12 +38,69 @@ import org.objectweb.asm.Opcodes
 import org.objectweb.asm.tree.ClassNode
 import java.util.*
 
+// fallen's fork: debug remap profiling - begin
+internal class PsiMapperDebugStats {
+    var files = 0
+    var filesWithChanges = 0
+    var filesWithErrors = 0
+    var totalChanges = 0
+    var mixinFiles = 0
+    var mixinClasses = 0
+    var mixinAtTargetPasses = 0
+    var mixinAccessorPasses = 0
+    var mixinInjectionPasses = 0
+    var javaClassesVisited = 0
+    var javaMethodsVisited = 0
+    var javaFieldsVisited = 0
+    var javaReferencesVisited = 0
+    var javaStaticReferencesVisited = 0
+    var javaImportListsVisited = 0
+    var patternVisitorNanos = 0L
+    var mixinVisitorNanos = 0L
+    var mixinAtTargetNanos = 0L
+    var mixinAccessorNanos = 0L
+    var mixinInjectionNanos = 0L
+    var javaVisitorNanos = 0L
+    var kotlinVisitorNanos = 0L
+    var resultNanos = 0L
+    var totalNanos = 0L
+    var slowestFile = "<none>"
+    var slowestFileNanos = 0L
+
+    fun recordFile(fileName: String, elapsedNanos: Long, changes: Int, errors: Int) {
+        files++
+        if (changes > 0) filesWithChanges++
+        if (errors > 0) filesWithErrors++
+        totalChanges += changes
+        if (elapsedNanos > slowestFileNanos) {
+            slowestFile = fileName
+            slowestFileNanos = elapsedNanos
+        }
+        totalNanos += elapsedNanos
+    }
+
+    fun summary(): String =
+        "[remap-debug] psiMapper: files=$files, filesWithChanges=$filesWithChanges, " +
+            "filesWithErrors=$filesWithErrors, totalChanges=$totalChanges, " +
+            "mixinFiles=$mixinFiles, mixinClasses=$mixinClasses, " +
+            "mixinPasses(at=$mixinAtTargetPasses, accessor=$mixinAccessorPasses, injection=$mixinInjectionPasses), " +
+            "visits(class=$javaClassesVisited, method=$javaMethodsVisited, field=$javaFieldsVisited, " +
+            "reference=$javaReferencesVisited, staticReference=$javaStaticReferencesVisited, importList=$javaImportListsVisited), " +
+            "phases(pattern=${patternVisitorNanos / 1_000_000}ms, mixin=${mixinVisitorNanos / 1_000_000}ms, " +
+            "at=${mixinAtTargetNanos / 1_000_000}ms, accessor=${mixinAccessorNanos / 1_000_000}ms, " +
+            "injection=${mixinInjectionNanos / 1_000_000}ms, java=${javaVisitorNanos / 1_000_000}ms, " +
+            "kotlin=${kotlinVisitorNanos / 1_000_000}ms, result=${resultNanos / 1_000_000}ms), " +
+            "total=${totalNanos / 1_000_000}ms, slowest=$slowestFile(${slowestFileNanos / 1_000_000}ms)"
+}
+// fallen's fork: debug remap profiling - end
+
 internal class PsiMapper(
         private val map: MappingSet,
         private val remappedProject: Project?,
         private val file: PsiFile,
         private val bindingContext: BindingContext,
-        private val patterns: PsiPatterns?
+        private val patterns: PsiPatterns?,
+        private val debugStats: PsiMapperDebugStats? = null,
 ) {
     private var mixinTarget: PsiClass? = null
     private val mixinTargets = mutableMapOf<String, PsiClass>()
@@ -542,6 +599,8 @@ internal class PsiMapper(
     }
 
     private fun remapAccessors(targetClass: PsiClass, mapping: ClassMapping<*, *>) {
+        debugStats?.let { it.mixinAccessorPasses++ }
+        val debugStart = System.nanoTime()
         file.accept(object : JavaRecursiveElementVisitor() {
             override fun visitMethod(method: PsiMethod) {
                 val accessorAnnotation = method.getAnnotation(CLASS_ACCESSOR)
@@ -578,6 +637,7 @@ internal class PsiMapper(
                 }
             }
         })
+        debugStats?.let { it.mixinAccessorNanos += System.nanoTime() - debugStart }
     }
 
     private fun remapMixinInjections(
@@ -586,6 +646,8 @@ internal class PsiMapper(
         remappedTargetClassNode: ClassNode?,
         mapping: ClassMapping<*, *>,
     ) {
+        debugStats?.let { it.mixinInjectionPasses++ }
+        val debugStart = System.nanoTime()
         file.accept(object : JavaRecursiveElementVisitor() {
             override fun visitMethod(method: PsiMethod) {
                 val methodAttrib = method.annotations.firstNotNullOfOrNull { it.findDeclaredAttributeValue("method") }
@@ -688,6 +750,7 @@ internal class PsiMapper(
                 }
             }
         })
+        debugStats?.let { it.mixinInjectionNanos += System.nanoTime() - debugStart }
     }
 
     private fun remapInternalType(internalType: String): String =
@@ -796,6 +859,8 @@ internal class PsiMapper(
         remapFullyQualifiedMethodOrField("Ldummy;dummy$desc").dropWhile { it != '(' }
 
     private fun remapAtTargets() {
+        debugStats?.let { it.mixinAtTargetPasses++ }
+        val debugStart = System.nanoTime()
         file.accept(object : JavaRecursiveElementVisitor() {
             override fun visitAnnotation(annotation: PsiAnnotation) {
                 if (CLASS_AT != annotation.qualifiedName) {
@@ -813,6 +878,7 @@ internal class PsiMapper(
                 }
             }
         })
+        debugStats?.let { it.mixinAtTargetNanos += System.nanoTime() - debugStart }
     }
 
     private fun applyPatternMatch(matcher: PsiPattern.Matcher) {
@@ -856,6 +922,8 @@ internal class PsiMapper(
     }
 
     fun remapFile(): Pair<String, List<Pair<Int, String>>> {
+        val debugFileStart = System.nanoTime()
+        var fileHasMixin = false
         if (file is KtFile) {
             for (importDirective in file.importDirectives) {
                 val alias = importDirective.aliasName
@@ -866,6 +934,7 @@ internal class PsiMapper(
         }
 
         if (patterns != null) {
+            val debugStart = System.nanoTime()
             file.accept(object : JavaRecursiveElementVisitor() {
                 override fun visitCodeBlock(block: PsiCodeBlock) {
                     patterns.find(block).forEach { applyPatternMatch(it) }
@@ -875,11 +944,17 @@ internal class PsiMapper(
                     patterns.find(expression).forEach { applyPatternMatch(it) }
                 }
             })
+            debugStats?.let { it.patternVisitorNanos += System.nanoTime() - debugStart }
         }
 
+        val mixinVisitorStart = System.nanoTime()
         file.accept(object : JavaRecursiveElementVisitor() {
             override fun visitClass(psiClass: PsiClass) {
                 val annotation = psiClass.getAnnotation(CLASS_MIXIN) ?: return
+                fileHasMixin = true
+                debugStats?.let {
+                    it.mixinClasses++
+                }
 
                 val (targetClass, mapping) = getMixinTarget(annotation) ?: Pair(null, null)
                 mixinTarget = targetClass
@@ -899,9 +974,17 @@ internal class PsiMapper(
                 remapMixinInjections(targetClass, targetClassNode, remappedTargetClassNode, mapping)
             }
         })
+        debugStats?.let { it.mixinVisitorNanos += System.nanoTime() - mixinVisitorStart }
 
+        val javaVisitorStart = System.nanoTime()
         file.accept(object : JavaRecursiveElementVisitor() {
+            override fun visitClass(psiClass: PsiClass) {
+                debugStats?.let { it.javaClassesVisited++ }
+                super.visitClass(psiClass)
+            }
+
             override fun visitField(field: PsiField) {
+                debugStats?.let { it.javaFieldsVisited++ }
                 if (valid(field)) {
                     map(field, field)
                 }
@@ -909,6 +992,7 @@ internal class PsiMapper(
             }
 
             override fun visitMethod(method: PsiMethod) {
+                debugStats?.let { it.javaMethodsVisited++ }
                 if (valid(method)) {
                     map(method, method)
                 }
@@ -916,6 +1000,7 @@ internal class PsiMapper(
             }
 
             override fun visitReferenceElement(reference: PsiJavaCodeReferenceElement) {
+                debugStats?.let { it.javaReferencesVisited++ }
                 if (valid(reference)) {
                     map(reference, reference.resolve())
                 }
@@ -923,6 +1008,7 @@ internal class PsiMapper(
             }
 
             override fun visitImportStaticReferenceElement(reference: PsiImportStaticReferenceElement) {
+                debugStats?.let { it.javaStaticReferencesVisited++ }
                 if (valid(reference)) {
                     var resolved = reference.resolve()
                     if (resolved == null) {
@@ -947,9 +1033,16 @@ internal class PsiMapper(
                 }
                 super.visitImportStaticReferenceElement(reference)
             }
+
+            override fun visitImportList(statement: PsiImportList) {
+                debugStats?.let { it.javaImportListsVisited++ }
+                super.visitImportList(statement)
+            }
         })
+        debugStats?.let { it.javaVisitorNanos += System.nanoTime() - javaVisitorStart }
 
         if (file is KtFile) {
+            val kotlinVisitorStart = System.nanoTime()
             file.accept(object : KtTreeVisitor<Void>() {
                 override fun visitNamedFunction(function: KtNamedFunction, data: Void?): Void? {
                     if (valid(function)) {
@@ -1019,9 +1112,17 @@ internal class PsiMapper(
                     return super.visitReferenceExpression(expression, data)
                 }
             }, null)
+            debugStats?.let { it.kotlinVisitorNanos += System.nanoTime() - kotlinVisitorStart }
         }
 
-        return getResult(file.text)
+        val resultStart = System.nanoTime()
+        val result = getResult(file.text)
+        debugStats?.let {
+            it.resultNanos += System.nanoTime() - resultStart
+            if (fileHasMixin) it.mixinFiles++
+            it.recordFile(file.name, System.nanoTime() - debugFileStart, changes.size, result.second.size)
+        }
+        return result
     }
 
     companion object {
