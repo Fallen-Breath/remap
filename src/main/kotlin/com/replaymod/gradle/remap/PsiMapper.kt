@@ -41,16 +41,17 @@ import java.util.*
 // fallen's fork: debug remap profiling - begin
 internal fun debugPotentialMappingNames(map: MappingSet): Set<String> = buildSet {
     fun addClassMapping(mapping: ClassMapping<*, *>) {
-        if (mapping.simpleObfuscatedName != mapping.simpleDeobfuscatedName) {
+        val classNameMayChange = mapping.fullObfuscatedName != mapping.fullDeobfuscatedName
+        if (classNameMayChange) {
             add(mapping.simpleObfuscatedName)
         }
         mapping.fieldMappings.forEach { field ->
-            if (field.obfuscatedName != field.deobfuscatedName) {
+            if (classNameMayChange || field.obfuscatedName != field.deobfuscatedName) {
                 add(field.obfuscatedName)
             }
         }
         mapping.methodMappings.forEach { method ->
-            if (method.obfuscatedName != method.deobfuscatedName) {
+            if (classNameMayChange || method.obfuscatedName != method.deobfuscatedName) {
                 add(method.obfuscatedName)
             }
         }
