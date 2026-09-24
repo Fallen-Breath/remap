@@ -80,9 +80,14 @@ internal class PsiMapperDebugStats(
     var javaStaticReferencesVisited = 0
     var javaReferenceResolveCalls = 0
     var javaReferencesResolved = 0
+    // fallen's fork: debug reference filtering criteria - begin
     var javaReferencesWithPotentialName = 0
+    var javaReferencesWithPotentialTextName = 0
     var javaStaticReferencesWithPotentialName = 0
+    var javaStaticReferencesWithPotentialTextName = 0
+    // fallen's fork: debug reference filtering criteria - end
     var javaReferenceMapCalls = 0
+    var javaReferencesWithChanges = 0
     var javaReferenceChanges = 0
     var javaImportListsVisited = 0
     var patternVisitorNanos = 0L
@@ -111,6 +116,32 @@ internal class PsiMapperDebugStats(
 
     fun hasPotentialMappingName(name: String?): Boolean = name != null && name in potentialMappingNames
 
+    // fallen's fork: debug reference filtering criteria - begin
+    fun hasPotentialMappingNameInText(reference: PsiJavaCodeReferenceElement): Boolean {
+        val text = reference.text
+        var index = 0
+        while (index < text.length) {
+            val codePoint = text.codePointAt(index)
+            if (!Character.isJavaIdentifierStart(codePoint)) {
+                index += Character.charCount(codePoint)
+                continue
+            }
+
+            val start = index
+            index += Character.charCount(codePoint)
+            while (index < text.length) {
+                val partCodePoint = text.codePointAt(index)
+                if (!Character.isJavaIdentifierPart(partCodePoint)) break
+                index += Character.charCount(partCodePoint)
+            }
+            if (text.substring(start, index) in potentialMappingNames) {
+                return true
+            }
+        }
+        return false
+    }
+    // fallen's fork: debug reference filtering criteria - end
+
     fun summary(): String =
         "[remap-debug] psiMapper: files=$files, filesWithChanges=$filesWithChanges, " +
             "filesWithErrors=$filesWithErrors, totalChanges=$totalChanges, " +
@@ -119,9 +150,13 @@ internal class PsiMapperDebugStats(
             "visits(class=$javaClassesVisited, method=$javaMethodsVisited, field=$javaFieldsVisited, " +
             "reference=$javaReferencesVisited, staticReference=$javaStaticReferencesVisited, importList=$javaImportListsVisited), " +
             "referenceResolve(calls=$javaReferenceResolveCalls, resolved=$javaReferencesResolved, " +
-            "potentialName=$javaReferencesWithPotentialName, staticPotentialName=$javaStaticReferencesWithPotentialName, " +
+            // fallen's fork: debug reference filtering criteria - begin
+            "potentialName=$javaReferencesWithPotentialName, potentialTextName=$javaReferencesWithPotentialTextName, " +
+            "staticPotentialName=$javaStaticReferencesWithPotentialName, " +
+            "staticPotentialTextName=$javaStaticReferencesWithPotentialTextName, " +
+            // fallen's fork: debug reference filtering criteria - end
             "potentialNames=${potentialMappingNames.size}, " +
-            "mapCalls=$javaReferenceMapCalls, changes=$javaReferenceChanges), " +
+            "mapCalls=$javaReferenceMapCalls, changedReferences=$javaReferencesWithChanges, changes=$javaReferenceChanges), " +
             "phases(pattern=${patternVisitorNanos / 1_000_000}ms, mixin=${mixinVisitorNanos / 1_000_000}ms, " +
             "at=${mixinAtTargetNanos / 1_000_000}ms, accessor=${mixinAccessorNanos / 1_000_000}ms, " +
             "injection=${mixinInjectionNanos / 1_000_000}ms, java=${javaVisitorNanos / 1_000_000}ms, " +
@@ -1041,6 +1076,11 @@ internal class PsiMapper(
                     if (debugStats?.hasPotentialMappingName(reference.referenceName) == true) {
                         debugStats?.let { it.javaReferencesWithPotentialName++ }
                     }
+                    // fallen's fork: debug reference filtering criteria - begin
+                    if (debugStats?.hasPotentialMappingNameInText(reference) == true) {
+                        debugStats?.let { it.javaReferencesWithPotentialTextName++ }
+                    }
+                    // fallen's fork: debug reference filtering criteria - end
                     debugStats?.let { it.javaReferenceResolveCalls++ }
                     val resolved = reference.resolve()
                     if (resolved != null) {
@@ -1050,7 +1090,10 @@ internal class PsiMapper(
                     debugStats?.let { it.javaReferenceMapCalls++ }
                     map(reference, resolved)
                     if (changes.size != changesBefore) {
-                        debugStats?.let { it.javaReferenceChanges++ }
+                        debugStats?.let {
+                            it.javaReferencesWithChanges++
+                            it.javaReferenceChanges += changes.size - changesBefore
+                        }
                     }
                 }
                 super.visitReferenceElement(reference)
@@ -1062,6 +1105,11 @@ internal class PsiMapper(
                     if (debugStats?.hasPotentialMappingName(reference.referenceName) == true) {
                         debugStats?.let { it.javaStaticReferencesWithPotentialName++ }
                     }
+                    // fallen's fork: debug reference filtering criteria - begin
+                    if (debugStats?.hasPotentialMappingNameInText(reference) == true) {
+                        debugStats?.let { it.javaStaticReferencesWithPotentialTextName++ }
+                    }
+                    // fallen's fork: debug reference filtering criteria - end
                     debugStats?.let { it.javaReferenceResolveCalls++ }
                     var resolved = reference.resolve()
                     if (resolved != null) {
@@ -1089,7 +1137,10 @@ internal class PsiMapper(
                     debugStats?.let { it.javaReferenceMapCalls++ }
                     map(reference, resolved)
                     if (changes.size != changesBefore) {
-                        debugStats?.let { it.javaReferenceChanges++ }
+                        debugStats?.let {
+                            it.javaReferencesWithChanges++
+                            it.javaReferenceChanges += changes.size - changesBefore
+                        }
                     }
                 }
                 super.visitImportStaticReferenceElement(reference)
