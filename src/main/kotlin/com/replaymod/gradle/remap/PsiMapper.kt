@@ -39,7 +39,30 @@ import org.objectweb.asm.tree.ClassNode
 import java.util.*
 
 // fallen's fork: debug remap profiling - begin
-internal class PsiMapperDebugStats {
+internal fun debugPotentialMappingNames(map: MappingSet): Set<String> = buildSet {
+    fun addClassMapping(mapping: ClassMapping<*, *>) {
+        if (mapping.simpleObfuscatedName != mapping.simpleDeobfuscatedName) {
+            add(mapping.simpleObfuscatedName)
+        }
+        mapping.fieldMappings.forEach { field ->
+            if (field.obfuscatedName != field.deobfuscatedName) {
+                add(field.obfuscatedName)
+            }
+        }
+        mapping.methodMappings.forEach { method ->
+            if (method.obfuscatedName != method.deobfuscatedName) {
+                add(method.obfuscatedName)
+            }
+        }
+        mapping.innerClassMappings.forEach(::addClassMapping)
+    }
+
+    map.topLevelClassMappings.forEach(::addClassMapping)
+}
+
+internal class PsiMapperDebugStats(
+    private val potentialMappingNames: Set<String>,
+) {
     var files = 0
     var filesWithChanges = 0
     var filesWithErrors = 0
@@ -54,6 +77,12 @@ internal class PsiMapperDebugStats {
     var javaFieldsVisited = 0
     var javaReferencesVisited = 0
     var javaStaticReferencesVisited = 0
+    var javaReferenceResolveCalls = 0
+    var javaReferencesResolved = 0
+    var javaReferencesWithPotentialName = 0
+    var javaStaticReferencesWithPotentialName = 0
+    var javaReferenceMapCalls = 0
+    var javaReferenceChanges = 0
     var javaImportListsVisited = 0
     var patternVisitorNanos = 0L
     var mixinVisitorNanos = 0L
@@ -79,6 +108,8 @@ internal class PsiMapperDebugStats {
         totalNanos += elapsedNanos
     }
 
+    fun hasPotentialMappingName(name: String?): Boolean = name != null && name in potentialMappingNames
+
     fun summary(): String =
         "[remap-debug] psiMapper: files=$files, filesWithChanges=$filesWithChanges, " +
             "filesWithErrors=$filesWithErrors, totalChanges=$totalChanges, " +
@@ -86,6 +117,10 @@ internal class PsiMapperDebugStats {
             "mixinPasses(at=$mixinAtTargetPasses, accessor=$mixinAccessorPasses, injection=$mixinInjectionPasses), " +
             "visits(class=$javaClassesVisited, method=$javaMethodsVisited, field=$javaFieldsVisited, " +
             "reference=$javaReferencesVisited, staticReference=$javaStaticReferencesVisited, importList=$javaImportListsVisited), " +
+            "referenceResolve(calls=$javaReferenceResolveCalls, resolved=$javaReferencesResolved, " +
+            "potentialName=$javaReferencesWithPotentialName, staticPotentialName=$javaStaticReferencesWithPotentialName, " +
+            "potentialNames=${potentialMappingNames.size}, " +
+            "mapCalls=$javaReferenceMapCalls, changes=$javaReferenceChanges), " +
             "phases(pattern=${patternVisitorNanos / 1_000_000}ms, mixin=${mixinVisitorNanos / 1_000_000}ms, " +
             "at=${mixinAtTargetNanos / 1_000_000}ms, accessor=${mixinAccessorNanos / 1_000_000}ms, " +
             "injection=${mixinInjectionNanos / 1_000_000}ms, java=${javaVisitorNanos / 1_000_000}ms, " +
@@ -1002,7 +1037,20 @@ internal class PsiMapper(
             override fun visitReferenceElement(reference: PsiJavaCodeReferenceElement) {
                 debugStats?.let { it.javaReferencesVisited++ }
                 if (valid(reference)) {
-                    map(reference, reference.resolve())
+                    if (debugStats?.hasPotentialMappingName(reference.referenceName) == true) {
+                        debugStats?.let { it.javaReferencesWithPotentialName++ }
+                    }
+                    debugStats?.let { it.javaReferenceResolveCalls++ }
+                    val resolved = reference.resolve()
+                    if (resolved != null) {
+                        debugStats?.let { it.javaReferencesResolved++ }
+                    }
+                    val changesBefore = changes.size
+                    debugStats?.let { it.javaReferenceMapCalls++ }
+                    map(reference, resolved)
+                    if (changes.size != changesBefore) {
+                        debugStats?.let { it.javaReferenceChanges++ }
+                    }
                 }
                 super.visitReferenceElement(reference)
             }
@@ -1010,7 +1058,14 @@ internal class PsiMapper(
             override fun visitImportStaticReferenceElement(reference: PsiImportStaticReferenceElement) {
                 debugStats?.let { it.javaStaticReferencesVisited++ }
                 if (valid(reference)) {
+                    if (debugStats?.hasPotentialMappingName(reference.referenceName) == true) {
+                        debugStats?.let { it.javaStaticReferencesWithPotentialName++ }
+                    }
+                    debugStats?.let { it.javaReferenceResolveCalls++ }
                     var resolved = reference.resolve()
+                    if (resolved != null) {
+                        debugStats?.let { it.javaReferencesResolved++ }
+                    }
                     if (resolved == null) {
                         val possibleTargets = reference.multiResolve(false)
                             .mapNotNull { if (it.isValidResult) it.element else null }
@@ -1029,7 +1084,12 @@ internal class PsiMapper(
                             }
                         }
                     }
+                    val changesBefore = changes.size
+                    debugStats?.let { it.javaReferenceMapCalls++ }
                     map(reference, resolved)
+                    if (changes.size != changesBefore) {
+                        debugStats?.let { it.javaReferenceChanges++ }
+                    }
                 }
                 super.visitImportStaticReferenceElement(reference)
             }
