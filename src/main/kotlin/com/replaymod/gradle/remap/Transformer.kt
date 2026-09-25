@@ -21,8 +21,10 @@ import org.jetbrains.kotlin.com.intellij.openapi.extensions.Extensions
 import org.jetbrains.kotlin.com.intellij.openapi.util.Disposer
 import org.jetbrains.kotlin.com.intellij.openapi.util.registry.Registry
 import org.jetbrains.kotlin.com.intellij.openapi.vfs.StandardFileSystems
+import org.jetbrains.kotlin.com.intellij.openapi.vfs.VirtualFile
 import org.jetbrains.kotlin.com.intellij.openapi.vfs.VirtualFileManager
 import org.jetbrains.kotlin.com.intellij.openapi.vfs.local.CoreLocalFileSystem
+import org.jetbrains.kotlin.com.intellij.psi.PsiFile
 import org.jetbrains.kotlin.com.intellij.psi.PsiManager
 import org.jetbrains.kotlin.config.CommonConfigurationKeys
 import org.jetbrains.kotlin.config.CompilerConfiguration
@@ -162,16 +164,22 @@ class Transformer(private val map: MappingSet) {
             val psiManager = PsiManager.getInstance(project)
             val vfs = VirtualFileManager.getInstance().getFileSystem(StandardFileSystems.FILE_PROTOCOL) as CoreLocalFileSystem
 
-            // fallen's fork: optimize use physical source roots for PSI - begin
-            fun findSourceFile(name: String) = if (physicalSourceFiles == null) {
-                vfs.findFileByIoFile(tmpDir!!.resolve(name).toFile())!!
-            } else {
-                vfs.findFileByIoFile(physicalSourceFiles.getValue(name).file)!!
+            fun findSourceFile(name: String): VirtualFile {
+                return if (physicalSourceFiles == null) {
+                    vfs.findFileByIoFile(tmpDir!!.resolve(name).toFile())!!
+                } else {
+                    vfs.findFileByIoFile(physicalSourceFiles.getValue(name).file)!!
+                }
             }
+            fun findPsiFile(file: VirtualFile): PsiFile {
+                return psiManager.findFile(file)!!
+            }
+
+            // fallen's fork: optimize use physical source roots for PSI - begin
             val virtualFiles = sources.mapValues { findSourceFile(it.key) }
             // fallen's fork: optimize use physical source roots for PSI - end
 
-            val psiFiles = virtualFiles.mapValues { psiManager.findFile(it.value)!! }
+            val psiFiles = virtualFiles.mapValues { findPsiFile(it.value) }
             val ktFiles = psiFiles.values.filterIsInstance<KtFile>()
 
             val analysis = try {
@@ -195,7 +203,7 @@ class Transformer(private val map: MappingSet) {
                     if (!source.contains(annotationName)) continue
                     try {
                         val patternFile = findSourceFile(unitName)
-                        val patternPsiFile = psiManager.findFile(patternFile)!!
+                        val patternPsiFile = findPsiFile(patternFile)
                         patterns.read(patternPsiFile, processedSources[unitName]!!)
                     } catch (e: Exception) {
                         throw RuntimeException("Failed to read patterns from file \"$unitName\".", e)
@@ -211,12 +219,24 @@ class Transformer(private val map: MappingSet) {
             }
 
             val results = HashMap<String, Pair<String, List<Pair<Int, String>>>>()
+            // fallen's fork: optimize reference resolve filtering - begin
+            val referenceResolveFilter = JavaReferenceResolveFilter(map)
+            val referenceResolveStats = ReferenceResolveStats()
+            // fallen's fork: optimize reference resolve filtering - end
             for (name in sources.keys) {
                 val file = findSourceFile(name)
-                val psiFile = psiManager.findFile(file)!!
+                val psiFile = findPsiFile(file)
 
                 var (text, errors) = try {
-                    PsiMapper(map, remappedEnv?.project, psiFile, analysis.bindingContext, patterns).remapFile()
+                    PsiMapper(
+                        map,
+                        remappedEnv?.project,
+                        psiFile,
+                        analysis.bindingContext,
+                        patterns,
+                        referenceResolveFilter,
+                        referenceResolveStats,
+                    ).remapFile()
                 } catch (e: Exception) {
                     throw RuntimeException("Failed to map file \"$name\".", e)
                 }
@@ -228,6 +248,7 @@ class Transformer(private val map: MappingSet) {
 
                 results[name] = text to errors
             }
+            System.err.println(referenceResolveStats.summary())
             return results
         } finally {
             // fallen's fork: optimize use physical source roots for PSI - begin

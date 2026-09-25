@@ -6,6 +6,7 @@ Modifications in this fork
 - Optimizations:
   - When `manageImports` is disabled, skip creating, writing, and cleaning the unused processed-source temporary directory.
   - Use physical source roots for PSI when source paths, file types, and encodings are safe; otherwise fall back to staged sources.
+  - Skip resolving ordinary Java references that cannot match any mapping source name; static imports keep their original resolution path.
 
 ### Remap
 To support multiple Minecraft versions with the ReplayMod, a preprocessor is used which transforms source code to compile against different Minecraft versions.

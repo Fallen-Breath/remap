@@ -38,12 +38,98 @@ import org.objectweb.asm.Opcodes
 import org.objectweb.asm.tree.ClassNode
 import java.util.*
 
+// fallen's fork: optimize reference resolve filtering - begin
+internal class JavaReferenceResolveFilter(map: MappingSet) {
+    private val mappingSourceNames = buildSet {
+        fun addClassNameForms(name: String?) {
+            if (name == null) return
+
+            add(name)
+            val dottedName = name.replace('/', '.')
+            add(dottedName)
+
+            val binaryName = dottedName.substringAfterLast('.')
+            add(binaryName)
+            var suffixStart = 0
+            while (true) {
+                val separator = binaryName.indexOf('$', suffixStart)
+                if (separator < 0) break
+                suffixStart = separator + 1
+                add(binaryName.substring(suffixStart))
+            }
+
+            dottedName.split('.', '$')
+                .filter { it.isNotEmpty() }
+                .forEach(::add)
+        }
+
+        fun addClassMapping(mapping: ClassMapping<*, *>) {
+            addClassNameForms(mapping.fullObfuscatedName)
+            addClassNameForms(mapping.simpleObfuscatedName)
+            mapping.fieldMappings.forEach { add(it.obfuscatedName) }
+            mapping.methodMappings.forEach { add(it.obfuscatedName) }
+            mapping.innerClassMappings.forEach(::addClassMapping)
+        }
+
+        map.topLevelClassMappings.forEach(::addClassMapping)
+    }
+
+    private fun hasMappingNameInText(text: String): Boolean {
+        var index = 0
+        while (index < text.length) {
+            val codePoint = text.codePointAt(index)
+            if (!Character.isJavaIdentifierStart(codePoint)) {
+                index += Character.charCount(codePoint)
+                continue
+            }
+
+            val start = index
+            index += Character.charCount(codePoint)
+            while (index < text.length) {
+                val partCodePoint = text.codePointAt(index)
+                if (!Character.isJavaIdentifierPart(partCodePoint)) break
+                index += Character.charCount(partCodePoint)
+            }
+            if (text.substring(start, index) in mappingSourceNames) return true
+        }
+        return false
+    }
+
+    fun shouldResolve(reference: PsiJavaCodeReferenceElement): Boolean {
+        var current: PsiJavaCodeReferenceElement? = reference
+        while (current != null) {
+            if (current.referenceName?.let { it in mappingSourceNames } == true) return true
+            if (hasMappingNameInText(current.text)) return true
+            current = current.qualifier as? PsiJavaCodeReferenceElement
+        }
+        return false
+    }
+}
+
+internal class ReferenceResolveStats {
+    var ordinaryReferences = 0
+    var ordinaryResolveCalls = 0
+    var ordinarySkipped = 0
+    var ordinaryInvalid = 0
+    var staticReferences = 0
+    var staticResolveCalls = 0
+
+    fun summary(): String =
+        "[remap] referenceResolve: ordinaryReferences=$ordinaryReferences, " +
+            "ordinaryResolveCalls=$ordinaryResolveCalls, ordinarySkipped=$ordinarySkipped, " +
+            "ordinaryInvalid=$ordinaryInvalid, staticReferences=$staticReferences, " +
+            "staticResolveCalls=$staticResolveCalls"
+}
+// fallen's fork: optimize reference resolve filtering - end
+
 internal class PsiMapper(
         private val map: MappingSet,
         private val remappedProject: Project?,
         private val file: PsiFile,
         private val bindingContext: BindingContext,
-        private val patterns: PsiPatterns?
+        private val patterns: PsiPatterns?,
+        private val referenceResolveFilter: JavaReferenceResolveFilter? = null,
+        private val referenceResolveStats: ReferenceResolveStats? = null,
 ) {
     private var mixinTarget: PsiClass? = null
     private val mixinTargets = mutableMapOf<String, PsiClass>()
@@ -901,6 +987,10 @@ internal class PsiMapper(
         })
 
         file.accept(object : JavaRecursiveElementVisitor() {
+            override fun visitClass(psiClass: PsiClass) {
+                super.visitClass(psiClass)
+            }
+
             override fun visitField(field: PsiField) {
                 if (valid(field)) {
                     map(field, field)
@@ -916,14 +1006,29 @@ internal class PsiMapper(
             }
 
             override fun visitReferenceElement(reference: PsiJavaCodeReferenceElement) {
-                if (valid(reference)) {
-                    map(reference, reference.resolve())
+                referenceResolveStats?.let { it.ordinaryReferences++ }
+                if (!valid(reference)) {
+                    referenceResolveStats?.let { it.ordinaryInvalid++ }
+                    super.visitReferenceElement(reference)
+                    return
                 }
+
+                // fallen's fork: optimize reference resolve filtering - begin
+                if (referenceResolveFilter?.shouldResolve(reference) != false) {
+                    referenceResolveStats?.let { it.ordinaryResolveCalls++ }
+                    val resolved = reference.resolve()
+                    map(reference, resolved)
+                } else {
+                    referenceResolveStats?.let { it.ordinarySkipped++ }
+                }
+                // fallen's fork: optimize reference resolve filtering - end
                 super.visitReferenceElement(reference)
             }
 
             override fun visitImportStaticReferenceElement(reference: PsiImportStaticReferenceElement) {
+                referenceResolveStats?.let { it.staticReferences++ }
                 if (valid(reference)) {
+                    referenceResolveStats?.let { it.staticResolveCalls++ }
                     var resolved = reference.resolve()
                     if (resolved == null) {
                         val possibleTargets = reference.multiResolve(false)
@@ -946,6 +1051,10 @@ internal class PsiMapper(
                     map(reference, resolved)
                 }
                 super.visitImportStaticReferenceElement(reference)
+            }
+
+            override fun visitImportList(statement: PsiImportList) {
+                super.visitImportList(statement)
             }
         })
 
