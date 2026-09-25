@@ -109,15 +109,23 @@ internal class JavaReferenceResolveFilter(map: MappingSet) {
 internal class ReferenceResolveStats {
     var ordinaryReferences = 0
     var ordinaryResolveCalls = 0
-    var ordinarySkipped = 0
     var ordinaryInvalid = 0
+    // fallen's fork: debug reference resolve timing - begin
+    var ordinaryWouldResolve = 0
+    var ordinaryWouldSkip = 0
+    var ordinaryWouldResolveNanos = 0L
+    var ordinaryWouldSkipNanos = 0L
+    // fallen's fork: debug reference resolve timing - end
     var staticReferences = 0
     var staticResolveCalls = 0
 
     fun summary(): String =
         "[remap] referenceResolve: ordinaryReferences=$ordinaryReferences, " +
-            "ordinaryResolveCalls=$ordinaryResolveCalls, ordinarySkipped=$ordinarySkipped, " +
-            "ordinaryInvalid=$ordinaryInvalid, staticReferences=$staticReferences, " +
+            "ordinaryResolveCalls=$ordinaryResolveCalls, ordinaryInvalid=$ordinaryInvalid, " +
+            "ordinaryWouldResolve=$ordinaryWouldResolve, ordinaryWouldSkip=$ordinaryWouldSkip, " +
+            "ordinaryWouldResolveTime=${ordinaryWouldResolveNanos / 1_000_000}ms, " +
+            "ordinaryWouldSkipTime=${ordinaryWouldSkipNanos / 1_000_000}ms, " +
+            "staticReferences=$staticReferences, " +
             "staticResolveCalls=$staticResolveCalls"
 }
 // fallen's fork: optimize reference resolve filtering - end
@@ -1013,15 +1021,23 @@ internal class PsiMapper(
                     return
                 }
 
-                // fallen's fork: optimize reference resolve filtering - begin
-                if (referenceResolveFilter?.shouldResolve(reference) != false) {
-                    referenceResolveStats?.let { it.ordinaryResolveCalls++ }
-                    val resolved = reference.resolve()
-                    map(reference, resolved)
-                } else {
-                    referenceResolveStats?.let { it.ordinarySkipped++ }
+                val wouldResolve = referenceResolveFilter?.shouldResolve(reference) != false
+                // fallen's fork: debug reference resolve timing - begin
+                val resolveStart = System.nanoTime()
+                val resolved = reference.resolve()
+                val resolveNanos = System.nanoTime() - resolveStart
+                referenceResolveStats?.let {
+                    it.ordinaryResolveCalls++
+                    if (wouldResolve) {
+                        it.ordinaryWouldResolve++
+                        it.ordinaryWouldResolveNanos += resolveNanos
+                    } else {
+                        it.ordinaryWouldSkip++
+                        it.ordinaryWouldSkipNanos += resolveNanos
+                    }
                 }
-                // fallen's fork: optimize reference resolve filtering - end
+                // fallen's fork: debug reference resolve timing - end
+                map(reference, resolved)
                 super.visitReferenceElement(reference)
             }
 
